@@ -484,27 +484,38 @@ static int rsx_vp_decompile_impl(
             /* The condition applies whether or not cond_test is set: every
              * branch in these programs has test=0 with a real cond. */
             static const char* cmp[8] = { 0, "<", "==", "<=", ">", "!=", ">=", 0 };
-            char c[48];
+            char c[128];
             if (cond == 7)      snprintf(c, sizeof c, "true");
             else if (cond == 0) snprintf(c, sizeof c, "false");
             else snprintf(c, sizeof c, "(cc[%u].%c %s 0.0)", (d0 >> 25) & 1,
                           SWZ[(d0 >> 8) & 3], cmp[cond]);
             const int next = instrs;
-            if (sca_op == 0x09 || sca_op == 0x08)          /* BRI, BRA */
+            /* BRB/CLB test one of the 32 boolean "branch bits" the guest sets
+             * with SET_TRANSFORM_BRANCH_BITS (vp_branch_bits in VPConst):
+             * D3[23:27] picks the bit, D3[28] the polarity (1 = jump when
+             * set, 0 = jump when clear), RPCS3 as oracle. The CC cond above
+             * still gates it; every BRB on the Sly discs has cond=7. */
+            if (sca_op == 0x11 || sca_op == 0x12) {
+                char bc[96];
+                snprintf(bc, sizeof bc, "((vp_branch_bits & %uu) %s 0u)",
+                         1u << ((d3 >> 23) & 31u), ((d3 >> 28) & 1u) ? "!=" : "==");
+                if (cond == 7) snprintf(c, sizeof c, "%s", bc);
+                else if (cond != 0) {
+                    char cc_c[64];
+                    snprintf(cc_c, sizeof cc_c, "%s", c);
+                    snprintf(c, sizeof c, "(%s && %s)", cc_c, bc);
+                }
+            }
+            if (sca_op == 0x09 || sca_op == 0x08 || sca_op == 0x11) /* BRI, BRA, BRB */
                 snprintf(flow_term, sizeof flow_term, "        _pc = %s ? %u : %d;\n", c, tgt, next);
-            else if (sca_op == 0x0A || sca_op == 0x0B)     /* CAL, CLI */
+            else if (sca_op == 0x0A || sca_op == 0x0B || sca_op == 0x12) /* CAL, CLI, CLB */
                 snprintf(flow_term, sizeof flow_term,
                          "        if (%s) { _cs[_csp] = %d; _csp = min(_csp + 1, 7); _pc = %u; } else _pc = %d;\n",
                          c, next, tgt, next);
-            else if (sca_op == 0x0C)                       /* RET */
+            else                                           /* RET */
                 snprintf(flow_term, sizeof flow_term,
                          "        if (%s) { if (_csp > 0) { _csp--; _pc = _cs[_csp]; } else _pc = -1; } else _pc = %d;\n",
                          c, next);
-            else {                                         /* BRB/CLB: boolean-register branches */
-                n_flow_skipped++;
-                snprintf(flow_term, sizeof flow_term,
-                         "        _pc = %d; /* TODO: %s not modelled */\n", next, rsx_vp_sca_name(sca_op));
-            }
         }
         /* ---- scalar ALU (reads SRC2) ---- */
         if ((smx|smy|smz|smw) && sca_op != 0x00) {
@@ -594,11 +605,14 @@ static int rsx_vp_decompile_impl(
         "};\n"
         /* b0: 512 vec4 transform constants + the RSX viewport transform,
          * pre-mapped by the harness to D3D clip space:
-         *   ndc.xyz = clip.xyz * vp_posscale.xyz + clip.w * vp_posoffset.xyz */
+         *   ndc.xyz = clip.xyz * vp_posscale.xyz + clip.w * vp_posoffset.xyz
+         * then the transform branch bits in the x lane of one more vec4
+         * (RSX_VP_CB_BRANCH_BITS_OFFSET; the block is 515 vec4 = 8240 B). */
         "cbuffer VPConst : register(b0) {\n"
         "    float4 vp_c[512];\n"
         "    float4 vp_posscale;\n"
         "    float4 vp_posoffset;\n"
+        "    uint vp_branch_bits;\n"   /* SET_TRANSFORM_BRANCH_BITS, for BRB/CLB */
         "};\n"
         /* NV vertex programs multiply by the legacy rule: 0 times anything,
          * INF and NaN included, is 0. IEEE gives NaN, and one RCP of a zero

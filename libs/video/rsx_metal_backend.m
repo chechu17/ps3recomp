@@ -292,7 +292,7 @@ static id<MTLLibrary> s_shader_lib;    /* built-in fixed-function shaders */
 
 /* ---- per-draw constant blocks -----------------------------------------------
  * VPConst is the 512 float4 transform constants plus the viewport epilogue's
- * posscale/posoffset (8224 bytes); PSConstants is the fragment program's
+ * posscale/posoffset and the BRB/CLB branch bits (8240 bytes); PSConstants is the fragment program's
  * inline constants plus fp_alpha. Constants change between draws in a frame,
  * so each draw snapshots its own blocks -- the D3D12 backend keeps a per-draw
  * VP_CB_STRIDE slot for the same reason. Both blocks are past the 4 KB limit
@@ -301,7 +301,7 @@ static id<MTLLibrary> s_shader_lib;    /* built-in fixed-function shaders */
  * one buffer, exactly like the vertices.
  * --------------------------------------------------------------------------*/
 
-#define MTL_VP_CB_BYTES  ((RSX_MAX_VERTEX_CONSTANTS + 2) * 16)
+#define MTL_VP_CB_BYTES  ((RSX_MAX_VERTEX_CONSTANTS + 3) * 16)  /* + branch bits */
 #define MTL_CB_ALIGN     256u
 #define MTL_CB_MAX       (256u << 20)
 static u8* s_cb;
@@ -1007,6 +1007,7 @@ static int guest_programs_for(const rsx_state* st, MtlDraw* d)
     vpx[4] = vpx[5] = vpx[7] = 0.0f;
     if (st->viewport_scale[2] != 0.0f) { vpx[2] = st->viewport_scale[2]; vpx[6] = st->viewport_offset[2]; }
     else                                { vpx[2] = 1.0f;                  vpx[6] = 0.0f; }
+    { u32* bb = (u32*)(vpx + 8); bb[0] = st->transform_branch_bits; bb[1] = bb[2] = bb[3] = 0; }
 
     u8* fp = s_cb + fp_off;
     memset(fp, 0, fp_len);

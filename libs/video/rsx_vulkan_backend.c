@@ -1114,7 +1114,7 @@ static int vk_ensure_vertex_buffer(VkDeviceSize bytes)
 #define VK_FP_MAX_BYTES  4096u              /* bound on a fragment program, as Metal/D3D12 */
 #define VK_HLSL_BYTES    (256u * 1024u)
 #define VK_SPV_WORDS     (256u * 1024u)
-#define VK_VPCONST_BYTES ((RSX_MAX_VERTEX_CONSTANTS + 2u) * 16u)
+#define VK_VPCONST_BYTES ((RSX_MAX_VERTEX_CONSTANTS + 3u) * 16u)  /* + branch bits */
 #define VK_GUEST_ATTRS   16u
 #define VK_GUEST_FLOATS  (VK_GUEST_ATTRS * 4u)   /* per vertex */
 
@@ -1511,6 +1511,7 @@ static int vk_guest_draw(const rsx_state* st, u32 prim, u32 first, u32 count)
     vpx[4] = vpx[5] = vpx[7] = 0.0f;
     if (st->viewport_scale[2] != 0.0f) { vpx[2] = st->viewport_scale[2]; vpx[6] = st->viewport_offset[2]; }
     else                                { vpx[2] = 1.0f;                  vpx[6] = 0.0f; }
+    { u32* bb = (u32*)(vpx + 8); bb[0] = st->transform_branch_bits; bb[1] = bb[2] = bb[3] = 0; }
     /* PSConstants: inline constants as host-order bit patterns, then fp_alpha. */
     u8* fpc = (u8*)s_g.ubo.ptr + s_g.ps_off;
     memset(fpc, 0, fp_len);

@@ -54,7 +54,7 @@ extern u32 ppu_vm_size;
  * target rather than destroying a live one. */
 #define ENG_MAX_SURFACE_DIM 8192u
 
-#define ENG_VP_CB_BYTES    ((RSX_DSP_NUM_CONSTANTS + 2) * 16u)
+#define ENG_VP_CB_BYTES    ((RSX_DSP_NUM_CONSTANTS + 3) * 16u)  /* + branch bits */
 #define ENG_FP_MAX_BYTES   0x10000u
 
 #define M_ALPHA_TEST_ENABLE   0x0304
@@ -2630,6 +2630,8 @@ static void sink_end(void* user, const rsx_dispatch* r)
     }
     memcpy(g.vp_cb, g.rsx.constants, RSX_DSP_NUM_CONSTANTS * 16u);
     memcpy(g.vp_cb + RSX_DSP_NUM_CONSTANTS * 16u, xf, sizeof xf);
+    { const u32 bb[4] = { rsx_dsp_reg(&g.rsx, 0x1FF8u /* TRANSFORM_BRANCH_BITS */), 0, 0, 0 };
+      memcpy(g.vp_cb + (RSX_DSP_NUM_CONSTANTS + 2) * 16u, bb, sizeof bb); }  /* vp_branch_bits */
 
     /* The buffered fragment constants, then fp_alpha: the layout
      * rsx_fp_decompile_buffered_ex compiled the shader against. */

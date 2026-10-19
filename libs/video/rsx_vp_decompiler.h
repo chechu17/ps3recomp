@@ -48,9 +48,16 @@ int rsx_vp_analyze_inputs(const u8* ucode, u32 max_bytes,
  * vp_posoffset (the RSX viewport transform mapped to D3D clip space; the
  * caller computes them per draw), SV_Position + COLOR0/1 + FOG + TEXCOORD0..7
  * varyings routed per the NV40 output register map (o0/o1/o2/o5/o7..o14).
- * Not modeled: condition-code tests and flow control (BRA/CAL/...). TXL is
- * stubbed to zero unless rsx_vp_decompile_ex receives a bound-unit mask. */
+ * After vp_posoffset comes `uint vp_branch_bits` (the guest's
+ * SET_TRANSFORM_BRANCH_BITS) at RSX_VP_CB_BRANCH_BITS_OFFSET; BRB/CLB jump or
+ * call on one of its bits. TXL is stubbed to zero unless rsx_vp_decompile_ex
+ * receives a bound-unit mask. */
 int rsx_vp_decompile(const u8* ucode, u32 max_bytes, char* out, u32 out_size);
+
+/* VPConst layout: vp_c[512], vp_posscale, vp_posoffset, then the branch bits
+ * in the x lane of one more vec4. Backends size and fill b0 from these. */
+#define RSX_VP_CB_BRANCH_BITS_OFFSET (514u * 16u)
+#define RSX_VP_CB_BYTES              (515u * 16u)
 
 /* The VP slot the next program decompiled starts at (NV4097 transform
  * program start). Branch targets are absolute slots; this makes them relative

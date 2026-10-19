@@ -294,6 +294,10 @@ jobs:
           # had rotted to the point of not compiling while nothing ran it.
           ${{ matrix.compiler == 'clang' && 'clang' || 'gcc' }} -std=gnu17 -Wall -Wextra -I include -o /tmp/test_fp_decompiler libs/video/tests/test_fp_decompiler.c libs/video/rsx_fp_decompiler.c
           /tmp/test_fp_decompiler
+          # The vertex-program decoder's boolean branches: BRB/CLB jump or
+          # call on a SET_TRANSFORM_BRANCH_BITS bit read from VPConst.
+          ${{ matrix.compiler == 'clang' && 'clang' || 'gcc' }} -std=gnu17 -Wall -Wextra -I include -o /tmp/test_vp_decompiler libs/video/tests/test_vp_decompiler.c libs/video/rsx_vp_decompiler.c
+          /tmp/test_vp_decompiler
           # The register-file draw engine's platform-neutral halves, driven
           # through its dispatch sink against a stub backend: the surface set's
           # keying and reallocation, a texture unit that names a render target

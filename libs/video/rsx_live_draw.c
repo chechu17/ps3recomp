@@ -169,7 +169,7 @@ extern volatile unsigned long long g_yz_auto_start_tick;
  * tables share entries, so this is 128 unique tables between GPU flushes. */
 #define SMP_RING_TABLES  128
 
-#define CB_BLOCK_BYTES   ((512 + 2) * 16)
+#define CB_BLOCK_BYTES   ((512 + 3) * 16)  /* VPConst incl. branch bits */
 #define CB_BLOCK_ALIGNED ((CB_BLOCK_BYTES + 255) & ~255u)
 #define CB_RING_BYTES    (CB_BLOCK_ALIGNED * SRV_RING_TABLES)
 #define PS_CB_RING_BYTES CB_RING_BYTES
@@ -7451,6 +7451,8 @@ static void sink_end_impl(void* user, const rsx_dispatch* r)
     u8* cbdst = g.cb_mapped + g.cb_used;
     memcpy(cbdst, g.rsx.constants, RSX_DSP_NUM_CONSTANTS * 16);
     memcpy(cbdst + 512 * 16, xf, sizeof(xf));
+    { const u32 bb[4] = { rsx_dsp_reg(&g.rsx, 0x1FF8u /* TRANSFORM_BRANCH_BITS */), 0, 0, 0 };
+      memcpy(cbdst + 514 * 16, bb, sizeof(bb)); }   /* vp_branch_bits (BRB/CLB) */
 
     g.list->lpVtbl->SetPipelineState(g.list, pso);
     g.list->lpVtbl->SetGraphicsRootSignature(g.list, g.rootsig_x);

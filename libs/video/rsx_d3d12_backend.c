@@ -58,8 +58,8 @@
                                  * the per-draw constant buffer is
                                  * VP_CB_STRIDE * MAX_DRAWS * 2 bytes, so 16384
                                  * asked for a 264 MB upload allocation. */
-/* Per-draw VP constant-buffer slot: vp_c[512] + posscale + posoffset
- * (514 vec4 = 8224 B) rounded up to D3D12's 256-byte CBV alignment.
+/* Per-draw VP constant-buffer slot: vp_c[512] + posscale + posoffset +
+ * branch bits (515 vec4 = 8240 B) rounded up to D3D12's 256-byte CBV alignment.
  * Constants are snapshotted at RECORD time -- wave's passes each set their
  * own texScale/offset uniforms, so one per-frame snapshot ran every pass
  * with the LAST pass's constants. */
@@ -3171,6 +3171,10 @@ static void vp_record_cb(u32 slot, int vs_idx, const D3D12DrawRecord* dr)
     vpx[4] = vpx[5] = vpx[7] = 0.0f;
     if (vs_[2] != 0.0f) { vpx[2] = vs_[2]; vpx[6] = vo_[2]; }
     else                { vpx[2] = 1.0f;   vpx[6] = 0.0f;   }
+    /* vp_branch_bits: the boolean registers BRB/CLB test, as live at this
+     * draw (games flip them per draw: skinned vs rigid, water variants). */
+    { u32* bb = (u32*)(vpx + 8);
+      bb[0] = st->transform_branch_bits; bb[1] = bb[2] = bb[3] = 0; }
     /* DBG_ZOOM=<k> with DBG_CENTER="cx,cy": a debug camera applied in CLIP space,
      * not a framebuffer crop -- the geometry is re-rasterized at full resolution.
      * The shader epilogue already computes
