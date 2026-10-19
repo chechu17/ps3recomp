@@ -806,6 +806,27 @@ static DWORD WINAPI spu_async_thread(LPVOID p) {
 static void* spu_async_thread(void* p) { spu_async_run((spu_async_job*)p); return NULL; }
 #endif
 
+#define SPU_WORKLOAD_EA_MAX 64
+static struct { uint32_t ea; spu_lifted_entry_fn fn; int image_id; const char* name; }
+    s_by_ea[SPU_WORKLOAD_EA_MAX];
+static unsigned s_by_ea_count = 0;
+
+void spu_workload_register_ea(uint32_t ea, spu_lifted_entry_fn fn,
+                              int image_id, const char* name)
+{
+    for (unsigned i = 0; i < s_by_ea_count; i++)
+        if (s_by_ea[i].ea == ea) { s_by_ea[i].fn = fn; s_by_ea[i].image_id = image_id; s_by_ea[i].name = name; return; }
+    if (s_by_ea_count >= SPU_WORKLOAD_EA_MAX) {
+        fprintf(stderr, "[spu_workload] EA registry full, dropping %s\n", name ? name : "?");
+        return;
+    }
+    s_by_ea[s_by_ea_count].ea = ea;
+    s_by_ea[s_by_ea_count].fn = fn;
+    s_by_ea[s_by_ea_count].image_id = image_id;
+    s_by_ea[s_by_ea_count].name = name;
+    s_by_ea_count++;
+}
+
 int spu_workload_dispatch_job(const uint8_t* image, uint32_t image_size,
                               uint32_t job_ea, uint32_t job_desc_size)
 {
@@ -816,6 +837,12 @@ int spu_workload_dispatch_job(const uint8_t* image, uint32_t image_size,
     int image_id = 0;
     for (unsigned i = 0; i < s_registry_count; i++)
         if (s_registry[i].fp == fp) { fn = s_registry[i].fn; image_id = s_registry[i].image_id; break; }
+    if (!fn && s_by_ea_count) {                 /* binary at a known guest EA */
+        extern uint8_t* vm_base;
+        uint32_t ea = (uint32_t)(image - vm_base);
+        for (unsigned i = 0; i < s_by_ea_count; i++)
+            if (s_by_ea[i].ea == ea) { fn = s_by_ea[i].fn; image_id = s_by_ea[i].image_id; break; }
+    }
     if (!fn) {
         /* Capped: an unlifted job a title dispatches every frame (Tornado
          * Outbreak's Wwise audio jobs) wrote 2 GB of these in three minutes,

@@ -52,6 +52,14 @@ void spu_workload_register(uint64_t fingerprint, spu_lifted_entry_fn fn,
 void spu_workload_register_img(uint64_t fingerprint, spu_lifted_entry_fn fn,
                                int image_id, const char* name);
 
+/* Fallback for SPURS job binaries whose size is only known at run time: register
+ * the lifted entry by the guest EA of the binary (eaBinary in the job descriptor)
+ * instead of by fingerprint. spu_workload_dispatch_job() tries the fingerprint
+ * first and this table only on a miss. Job binaries a title keeps in its own
+ * executable sit at fixed EAs, so this is exact for them. */
+void spu_workload_register_ea(uint32_t ea, spu_lifted_entry_fn fn,
+                              int image_id, const char* name);
+
 /* Look up a lifted entry by fingerprint; NULL if none registered. */
 spu_lifted_entry_fn spu_workload_find(uint64_t fingerprint);
 
