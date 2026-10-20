@@ -340,6 +340,17 @@ int rsx_process_method(rsx_state* state, u32 method, u32 data)
     { static int _rt=-1; if(_rt<0){ const char* e=getenv("RSX_TRACE");
         _rt = e ? (atoi(e) > 1 ? atoi(e) : 250) : 0; }
       if(_rt){ static int _m=0; if(_m++<_rt) fprintf(stderr,"[rsxm] method=0x%04X data=0x%08X\n", method, data); } }
+    /* INLINEDBG=1: INLINE_ARRAY (0x1818, vertex data pushed through the FIFO)
+     * has no handler here, so a pass drawn that way never reaches the backend.
+     * Count the words and say which colour surface they were meant for. */
+    if ((method & 0x1FFCu) == 0x1818u) {
+        static int dbg = -1; static unsigned long long words = 0;
+        if (dbg < 0) dbg = getenv("INLINEDBG") ? 1 : 0;
+        if (dbg && ((++words <= 8) || (words % 20000) == 0))
+            fprintf(stderr, "[INLINE] word %llu data=0x%08X surf=0x%X prim=%u fp=0x%X\n",
+                    words, data, state->surface_color_offset[0],
+                    state->primitive_type, state->shader_program);
+    }
     /* Back-end write label / semaphore (cellGcmSetWriteBackEndLabel): the RSX
      * writes a value to a report/label the CPU polls for CPU<->RSX sync (double
      * buffering). Real hardware DOES this; without it the game's frame-fence
