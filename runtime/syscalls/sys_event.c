@@ -294,6 +294,11 @@ int64_t sys_event_queue_receive(ppu_context* ctx)
     /* PPU_THREADGATE: the creating thread is now blocking -> workers may run
      * (PS3 priority semantics). Their job objects are fully initialized by now. */
     { extern void ydkj_release_pending_threads(void); ydkj_release_pending_threads(); }
+    /* EVQTIME=1: receive timeline (host us) to measure a consumer's wake rate. */
+    { static int et = -1; if (et < 0) et = getenv("EVQTIME") ? 1 : 0;
+      if (et) { extern unsigned long long ps3_qpc_us(void); static volatile long n = 0;
+        if (n++ < 40000) fprintf(stderr, "[evqt] t=%llu recv q=%u tid=%llu%c", ps3_qpc_us(),
+            queue_id, (unsigned long long)ctx->thread_id, 10); } }
     if (ps3_log_verbose())
         fprintf(stderr, "[WAIT] event_queue_receive(q=%u timeout=%llu) tid=%llu cia=0x%08X lr=0x%08X\n",
                 queue_id, (unsigned long long)timeout_us,

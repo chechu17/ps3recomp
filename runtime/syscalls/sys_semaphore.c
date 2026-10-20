@@ -328,7 +328,18 @@ int64_t sys_semaphore_destroy(ppu_context* ctx)
 static int64_t sys_semaphore_wait_impl(ppu_context* ctx);
 int64_t sys_semaphore_wait(ppu_context* ctx)
 {
+    /* SEMTIME=1: per-wait timeline (host us, tid, sem, timeout, lr, result,
+     * elapsed) to measure how long a producer really blocks per call. */
+    static int st = -1; if (st < 0) st = getenv("SEMTIME") ? 1 : 0;
+    extern unsigned long long ps3_qpc_us(void);
+    unsigned long long t0 = st ? ps3_qpc_us() : 0;
+    unsigned sem0 = (unsigned)ctx->gpr[3], lr0 = (unsigned)ctx->lr;
+    unsigned long long to0 = (unsigned long long)ctx->gpr[4];
     int64_t r = sys_semaphore_wait_impl(ctx);
+    if (st) { static volatile long n = 0; if (n++ < 40000)
+        fprintf(stderr, "[semt] t=%llu tid=%llu sem=%u to=%llu lr=0x%08X -> %lld en %lluus%c",
+                t0, (unsigned long long)ctx->thread_id, sem0, to0, lr0, (long long)r,
+                ps3_qpc_us() - t0, 10); }
     static int d = -1; if (d < 0) d = getenv("SEM_ERRDBG") ? 1 : 0;
     if (d && r) { static int n = 0; if (n++ < 12)
         fprintf(stderr, "[sem] wait(sem=%u) -> %lld%c",

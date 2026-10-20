@@ -446,6 +446,11 @@ static void timer_send_event(sys_timer_info* t)
     pthread_mutex_lock(&q->lock);
 #endif
 
+    { static int et = -1; if (et < 0) et = getenv("EVQTIME") ? 1 : 0;
+      if (et) { extern unsigned long long ps3_qpc_us(void); static volatile long n = 0;
+        if (n++ < 40000) fprintf(stderr, "[evqt] t=%llu timer q=%d count=%d/%d period=%lluus%c",
+            ps3_qpc_us(), t->event_queue_id, (int)q->count, (int)q->capacity,
+            (unsigned long long)t->period_usec, 10); } }
     if (q->count < q->capacity) {
         q->buffer[q->tail] = evt;
         q->tail = (q->tail + 1) % q->capacity;
