@@ -53,11 +53,13 @@
 #define FRAME_COUNT         2   /* double buffering */
 #define MAX_VERTICES    393216  /* per-frame vertex buffer (dbgfont submits
                                  * ~7.5k verts/frame; leave generous headroom) */
-#define MAX_DRAWS         2048  /* per-frame draw records. Sized from the
-                                 * measured worst case (~1841, FRAME_BUDGET);
-                                 * the per-draw constant buffer is
-                                 * VP_CB_STRIDE * MAX_DRAWS * 2 bytes, so 16384
-                                 * asked for a 264 MB upload allocation. */
+#define MAX_DRAWS         4096  /* per-frame draw records. Was 2048, sized from
+                                 * one title's worst case (~1841, FRAME_BUDGET);
+                                 * Sly 2's scenes fill 2048 and the AA resolve
+                                 * that ends the frame was the record dropped.
+                                 * The per-draw constant buffer is
+                                 * VP_CB_STRIDE * MAX_DRAWS * 2 bytes (~69 MB
+                                 * here); 16384 asked for 264 MB. */
 /* Per-draw VP constant-buffer slot: vp_c[512] + posscale + posoffset
  * (514 vec4 = 8224 B) rounded up to D3D12's 256-byte CBV alignment.
  * Constants are snapshotted at RECORD time -- wave's passes each set their
@@ -5205,7 +5207,12 @@ static void d3d12_clear(void* ud, u32 flags, u32 color, float depth, u8 stencil)
 
     /* An OFFSCREEN clear is just an ordered op in the current frame's pass
      * chain (demosaic clears each effect pass's surface) -- record it, don't
-     * touch the frame boundary. */
+     * touch the frame boundary. A clear op only ever clears colour, so one
+     * whose CLEAR_SURFACE mask names no colour channel (0x10 R, 0x20 G,
+     * 0x40 B, 0x80 A; 0x01/0x02 are depth/stencil) is not recorded at all:
+     * Sly 2 issues a depth-only clear of its AA buffer between the scene and
+     * the resolve, and taking it as a colour clear wiped every frame black. */
+    if (rt != 0 && !(flags & 0xF0u)) return;
     if (rt != 0) {
         if (s_d3d.draw_count < MAX_DRAWS) {
             D3D12DrawRecord* dr = &s_d3d.draws[s_d3d.draw_count++];
