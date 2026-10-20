@@ -97,6 +97,57 @@ static ppu_thread_info* find_thread(uint64_t thread_id)
     return t;
 }
 
+/* PPU_SAMPLE=<tid>: host-side sampler for one guest thread. Every ~1 ms it
+ * reads that thread's ctx.lr (the lifted code writes it before every call) plus
+ * the first two saved LRs on its guest stack, and every 5 s prints the most
+ * frequent (lr <- caller <- caller) triples. Read-only and racy by design: it
+ * answers "where does this thread spend its time" when nothing is logged. */
+#ifdef _WIN32
+#define PSMP_N 4096
+static struct { uint32_t a, b, c; uint32_t n; } s_psmp[PSMP_N];
+static DWORD WINAPI ppu_sampler_proc(LPVOID param)
+{
+    ppu_thread_info* t = (ppu_thread_info*)param;
+    extern uint32_t vm_read32(uint64_t);
+    unsigned long total = 0; ULONGLONG t0 = GetTickCount64();
+    for (;;) {
+        Sleep(1);
+        uint32_t a = (uint32_t)t->ctx.lr, b = 0, c = 0;
+        uint32_t sp = (uint32_t)t->ctx.gpr[1];
+        uint32_t lo = t->stack_addr, hi = t->stack_addr + t->stack_size;
+        if (sp >= lo && sp + 8 <= hi) {
+            uint32_t f1 = vm_read32(sp);
+            if (f1 >= lo && f1 + 24 <= hi) {
+                b = vm_read32(f1 + 16);
+                uint32_t f2 = vm_read32(f1);
+                if (f2 >= lo && f2 + 24 <= hi) c = vm_read32(f2 + 16);
+            }
+        }
+        uint32_t h = (a * 2654435761u ^ b * 40503u ^ c) & (PSMP_N - 1);
+        for (int k = 0; k < 64; k++) {
+            uint32_t i = (h + k) & (PSMP_N - 1);
+            if (s_psmp[i].n == 0) { s_psmp[i].a = a; s_psmp[i].b = b; s_psmp[i].c = c; }
+            if (s_psmp[i].a == a && s_psmp[i].b == b && s_psmp[i].c == c) { s_psmp[i].n++; break; }
+        }
+        total++;
+        if (GetTickCount64() - t0 >= 5000) {
+            fprintf(stderr, "[ppu-sample] tid=%llu %lu muestras:%c", (unsigned long long)t->ctx.thread_id, total, 10);
+            for (int r = 0; r < 15; r++) {
+                int best = -1;
+                for (int i = 0; i < PSMP_N; i++)
+                    if (s_psmp[i].n && (best < 0 || s_psmp[i].n > s_psmp[best].n)) best = i;
+                if (best < 0) break;
+                fprintf(stderr, "[ppu-sample]   %5.1f%%  lr=0x%08X <- 0x%08X <- 0x%08X%c",
+                        100.0 * s_psmp[best].n / total, s_psmp[best].a, s_psmp[best].b, s_psmp[best].c, 10);
+                s_psmp[best].n = 0;
+            }
+            memset(s_psmp, 0, sizeof s_psmp); total = 0; t0 = GetTickCount64();
+        }
+    }
+    return 0;
+}
+#endif
+
 /* ---------------------------------------------------------------------------
  * Host thread entry point
  * -----------------------------------------------------------------------*/
@@ -127,6 +178,11 @@ static void* ppu_host_thread_proc(void* param)
             (unsigned long long)info->ctx.thread_id,
             (unsigned long long)info->entry_addr, (unsigned long)GetCurrentThreadId());
 
+#ifdef _WIN32
+    { const char* e = getenv("PPU_SAMPLE");
+      if (e && (unsigned long long)atoi(e) == (unsigned long long)info->ctx.thread_id)
+          CreateThread(NULL, 0, ppu_sampler_proc, info, 0, NULL); }
+#endif
     /* Invoke the recompiled entry point */
     if (g_ppu_thread_entry_trampoline) {
         s_exit_armed = 1;
