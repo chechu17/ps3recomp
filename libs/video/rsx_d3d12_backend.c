@@ -1757,8 +1757,28 @@ static int vp_get_vs(const rsx_state* st)
         if (s_d3d.vp_vs[i].hash == hash) return i;
 
     static char hlsl[262144];
+    /* Branch targets in VP microcode are absolute transform-program slots;
+     * the decompiler makes them relative to the ucode it is handed only if it
+     * knows where that ucode starts. A program loaded behind another one
+     * (start slot != 0) otherwise jumps to the wrong instructions. */
+    { extern void rsx_vp_set_branch_base(u32 start_slot);
+      rsx_vp_set_branch_base(vstart / 16u); }
     int ni = rsx_vp_decompile(vuc, vlen, hlsl, sizeof hlsl);
+    { extern void rsx_vp_set_branch_base(u32 start_slot);
+      rsx_vp_set_branch_base(0); }
     if (ni <= 0) return -1;
+    /* VP_TODO_DBG=1: say once per program when the decompiler left something
+     * unmodelled (flow control, an unknown op) in it. */
+    { static int td = -1;
+      if (td < 0) td = getenv("VP_TODO_DBG") ? 1 : 0;
+      if (td) fprintf(stderr, "[VPNEW] vs hash=%08X start=%u instrs=%d flow=%d\n",
+                      hash, vstart / 16u, ni, strstr(hlsl, "FLOW ") != NULL);
+      const char* t = td ? strstr(hlsl, "TODO") : NULL;
+      if (t) { char what[96]; int k = 0;
+          while (t[k] && t[k] != '*' && t[k] != '\n' && k < 95) { what[k] = t[k]; k++; }
+          what[k] = 0;
+          fprintf(stderr, "[VPTODO] vs hash=%08X start=%u instrs=%d: %s\n",
+                  hash, vstart / 16u, ni, what); } }
     if (getenv("VP_DUMP")) { static int _d=0; if (_d++ < 4) {
         FILE* f = fopen("vp2_dump.hlsl", _d==1 ? "w" : "a");
         if (f) { fprintf(f, "/* per-draw VS hash pending, %d instrs */%s%s", ni, hlsl, "\n"); fclose(f); } } }
@@ -2500,6 +2520,22 @@ static int vp_upload_tex_slot(u32 off, u32 w, u32 h, u32 fmt, int cube, u32 mips
     u32 blkrow  = dxt ? tl.row_bytes : 0;
     u32 blkrows = dxt ? tl.rows      : 0;
     const u32 key_off = off;         /* lookup key: the offset as bound */
+    /* TEX_DXT_DBG=<N>: the first N distinct DXT uploads with how much of the
+     * source is non-zero and the first block. A texture read from the wrong
+     * memory (local vs main, a stale offset) decodes to one flat colour, which
+     * on screen looks like untextured geometry. */
+    if (dxt) { static int cap = -1, n = 0; static u32 seen[64]; static int ns = 0;
+      if (cap < 0) { const char* e = getenv("TEX_DXT_DBG"); cap = e ? atoi(e) : 0; }
+      int known = 0;
+      for (int i = 0; i < ns; i++) if (seen[i] == off) known = 1;
+      if (cap && n < cap && !known) { n++; if (ns < 64) seen[ns++] = off;
+          const u32 nb = blkrow * blkrows; u32 nz = 0;
+          for (u32 i = 0; i < nb; i += 7) if (vm_base[off + i]) nz++;
+          const u8* b = vm_base + off;
+          fprintf(stderr, "[TEXDXT] off=0x%08X %ux%u fmt=0x%02X bytes=%u nonzero=%u/%u "
+                          "blk0=%02X%02X%02X%02X %02X%02X%02X%02X\n",
+                  off, w, h, fmt, nb, nz, (nb + 6) / 7,
+                  b[0], b[1], b[2], b[3], b[4], b[5], b[6], b[7]); } }
     /* Sparse checksum of a texture's source bytes -- enough to notice an
      * animated surface changing, cheap enough to run on every bind. */
     /* (portable helper tex_csum() -- see above; a statement-expression macro
