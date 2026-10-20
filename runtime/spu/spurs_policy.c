@@ -401,7 +401,22 @@ int spu_run_policy_module(spu_lifted_entry_fn entry, int image_id,
                     spu_num, (void*)ctx, pm_halted, ctx->status, (uint32_t)ctx->pc & SPU_LS_MASK,
                     ctx->gpr[0]._u32[0] & SPU_LS_MASK, ctx->gpr[3]._u32[0], ctx->host_depth);
             for (unsigned k = 0; k < n; k++) fprintf(stderr, " %05X", r[k]);
-            fprintf(stderr, "\n"); fflush(stderr); } }
+            fprintf(stderr, "\n");
+            fprintf(stderr, "[pm-end]   r1=0x%05X r2=0x%05X r79=0x%05X r80=0x%05X\n",
+                    ctx->gpr[1]._u32[0] & SPU_LS_MASK, ctx->gpr[2]._u32[0] & SPU_LS_MASK,
+                    ctx->gpr[79]._u32[0] & SPU_LS_MASK, ctx->gpr[80]._u32[0] & SPU_LS_MASK);
+            /* SPU_PM_LSDUMP=<path>: the first abnormal end writes the lane's whole local
+             * store (256 KiB) and its 128 registers, to see what the PM left behind. */
+            { const char* d = getenv("SPU_PM_LSDUMP"); static volatile long s_dumped;
+              if (d && __atomic_add_fetch(&s_dumped, 1, __ATOMIC_RELAXED) == 1) {
+                  char path[512]; snprintf(path, sizeof path, "%s_ls.bin", d);
+                  FILE* f = fopen(path, "wb");
+                  if (f) { fwrite(ctx->ls, 1, SPU_LS_SIZE, f); fclose(f); }
+                  snprintf(path, sizeof path, "%s_gpr.bin", d);
+                  f = fopen(path, "wb");
+                  if (f) { fwrite(ctx->gpr, 16, 128, f); fclose(f); }
+                  fprintf(stderr, "[pm-end]   local store + registers -> %s_ls.bin / _gpr.bin\n", d); } }
+            fflush(stderr); } }
 
     if (s_claimlog) {
         unsigned claims = g_spu_putllc_sync_hit - claim_before;
