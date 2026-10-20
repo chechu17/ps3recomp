@@ -2508,6 +2508,15 @@ s32 cellGcmSetDisplayBuffer(u32 bufferId, u32 offset, u32 pitch,
  * offscreen render-to-texture passes. */
 int cellGcmOffsetIsDisplay(u32 offset)
 {
+    /* GCM_EXTRA_DISPLAY=<hex offset>: treat one more surface as a display
+     * buffer. Diagnostic: a title that renders into an antialiased or HDR
+     * buffer and resolves it some way the backend does not see yet can still
+     * be looked at, to tell "nothing renders" from "nothing reaches the
+     * display buffers". */
+    { static int init = 0; static u32 extra = 0;
+      if (!init) { const char* e = getenv("GCM_EXTRA_DISPLAY");
+          extra = e ? (u32)strtoul(e, NULL, 16) : 0; init = 1; }
+      if (extra && offset == extra) return 1; }
     for (int i = 0; i < CELL_GCM_MAX_DISPLAY_BUFFER_NUM; i++)
         if (s_display_buffer_set[i] && s_display_buffers[i].offset == offset)
             return 1;

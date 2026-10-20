@@ -6013,6 +6013,21 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
     }
     s_total++;
 
+    /* RSX_ARR_TRACE=<N>: the first N DRAW_ARRAYS with the state that decides
+     * where they go -- primitive, colour surface, whether a VP is loaded, FP.
+     * A resolve or composite pass is usually a handful of these per frame. */
+    { static int cap = -1, n = 0;
+      if (cap < 0) { const char* e = getenv("RSX_ARR_TRACE"); cap = e ? atoi(e) : 0; }
+      if (cap && n < cap) { n++;
+          const rsx_state* st = s_d3d.current_rsx_state;
+          fprintf(stderr, "[ARR] #%llu prim=%u first=%u count=%u surf=0x%X/0x%X tgt=0x%X "
+                          "fmt=0x%X vp_bytes=%u fp=0x%X attr0=%d\n",
+                  (unsigned long long)s_total, primitive, first, count,
+                  st ? st->surface_color_offset[0] : 0, st ? st->surface_color_offset[1] : 0,
+                  st ? st->color_target : 0, st ? st->surface_format : 0,
+                  st ? st->vp_ucode_bytes : 0, st ? st->shader_program : 0,
+                  st ? (int)st->vertex_attribs[0].enabled : -1); } }
+
     if (!s_d3d.pipeline_ready || !s_d3d.vb_mapped) return;
     if (count == 0 || count > MAX_VERTICES) return;
 
@@ -6259,9 +6274,25 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
                primitive, first, count);
         log_count++;
     }
-    if (!s_d3d.pipeline_ready) return;
-    if (count == 0 || count > MAX_VERTICES) return;
-    if (!s_d3d.vp_vb_mapped || !s_d3d.vp_root_sig) return;
+    /* RSX_IDX_DROPS=1: where indexed draws leave this function. A title can
+     * push half a million DRAW_INDEX_ARRAYs and still record one draw a frame;
+     * this says which early-out swallows them. Printed every 50000 calls. */
+    enum { IDX_PIPE, IDX_COUNT, IDX_VPPATH, IDX_PRIM, IDX_NOATTR0, IDX_EMPTY,
+           IDX_MERGED, IDX_FULL, IDX_RECORDED, IDX_N };
+    static long long idx_why[IDX_N];
+    static int idx_dbg = -1;
+    if (idx_dbg < 0) idx_dbg = getenv("RSX_IDX_DROPS") ? 1 : 0;
+#define IDX_OUT(r) do { if (idx_dbg) { idx_why[r]++; \
+        static long long _calls = 0; if ((++_calls % 50000) == 0) \
+            printf("[IDXDROP] pipe=%lld count=%lld vppath=%lld prim=%lld noattr0=%lld " \
+                   "empty=%lld merged=%lld full=%lld recorded=%lld (draws=%u)\n", \
+                   idx_why[IDX_PIPE], idx_why[IDX_COUNT], idx_why[IDX_VPPATH], \
+                   idx_why[IDX_PRIM], idx_why[IDX_NOATTR0], idx_why[IDX_EMPTY], \
+                   idx_why[IDX_MERGED], idx_why[IDX_FULL], idx_why[IDX_RECORDED], \
+                   s_d3d.draw_count), fflush(stdout); } } while (0)
+    if (!s_d3d.pipeline_ready) { IDX_OUT(IDX_PIPE); return; }
+    if (count == 0 || count > MAX_VERTICES) { IDX_OUT(IDX_COUNT); return; }
+    if (!s_d3d.vp_vb_mapped || !s_d3d.vp_root_sig) { IDX_OUT(IDX_VPPATH); return; }
 
     /* Expand through the VP path (indices resolved CPU-side): QUADS -> two
      * triangles per quad, TRIANGLES straight through, STRIP/FAN -> triangle
@@ -6276,6 +6307,12 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
         static int _skip = 0;
         if (_skip++ < 3)
             printf("[D3D12] draw_indexed: skipping prim=%u (not wired)\n", primitive);
+        IDX_OUT(IDX_PRIM);
+        return;
+    }
+    if (!emitted) {
+        const rsx_state* st = s_d3d.current_rsx_state;
+        IDX_OUT(st && !st->vertex_attribs[0].enabled ? IDX_NOATTR0 : IDX_EMPTY);
         return;
     }
     /* Same BEGIN/END batch concatenation as the non-indexed path: this title's
@@ -6293,6 +6330,7 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
             pv->vb_byte_offset + pv->vertex_count * VP_VERT_STRIDE == rec) {
             pv->vertex_count += emitted;
             s_d3d.merge_first_end = first + count;
+            IDX_OUT(IDX_MERGED);
             return;
         }
     }
@@ -6352,7 +6390,11 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
         /* Anchor for merging the next batch of this indexed stream. */
         s_d3d.merge_prev_draw = (primitive == RSX_PRIMITIVE_TRIANGLES);
         s_d3d.merge_first_end = first + count;
+        IDX_OUT(IDX_RECORDED);
+    } else {
+        IDX_OUT(IDX_FULL);
     }
+#undef IDX_OUT
 }
 
 static void d3d12_bind_texture(void* ud, u32 unit, const rsx_texture_state* tex)
