@@ -15,6 +15,7 @@
  */
 
 #include "rsx_commands.h"
+#include "rsx_vertex_formats.h"    /* rsx_vertex_attrib_size (INLINE_ARRAY layout) */
 #include "ps3emu/milestone.h"   /* ps3_ms -- boot milestone log */
 #include <stdio.h>
 #include <stdlib.h>   /* getenv -- an implicit decl returns int, truncating the pointer */
@@ -332,6 +333,76 @@ static int process_vertex_attrib_method(rsx_state* state, u32 method, u32 data)
  * Main method dispatch
  * -----------------------------------------------------------------------*/
 
+/* ---------------------------------------------------------------------------
+ * INLINE_ARRAY
+ *
+ * A title can push vertices through the FIFO instead of pointing the RSX at a
+ * vertex array: NV4097_INLINE_ARRAY words between BEGIN_END(prim) and
+ * BEGIN_END(0). Each vertex is the enabled attributes packed in attribute
+ * order, big-endian, the same layout rsx_vertex_inline_layout gives the
+ * register-file engine. Sly 2 resolves its 2x AA buffer onto the display
+ * buffers this way (a fullscreen QUAD_STRIP) and draws part of its scene so;
+ * without this nothing of it reached the backend.
+ * -----------------------------------------------------------------------*/
+#define RSX_INLINE_MAX_BYTES 65536u
+static u8  s_inline[RSX_INLINE_MAX_BYTES];
+static u32 s_inline_len;
+static int s_inline_overflow;
+
+static void inline_push(u32 word)
+{
+    if (s_inline_len + 4u > RSX_INLINE_MAX_BYTES) { s_inline_overflow = 1; return; }
+    s_inline[s_inline_len + 0] = (u8)(word >> 24);
+    s_inline[s_inline_len + 1] = (u8)(word >> 16);
+    s_inline[s_inline_len + 2] = (u8)(word >> 8);
+    s_inline[s_inline_len + 3] = (u8)word;
+    s_inline_len += 4;
+}
+
+static void inline_flush(rsx_state* state)
+{
+    const u32 len = s_inline_len;
+    const int overflow = s_inline_overflow;
+    s_inline_len = 0;
+    s_inline_overflow = 0;
+    if (!len) return;
+    if (overflow) {
+        /* A truncated stream ends in a torn vertex: drop it whole. */
+        static int n = 0;
+        if (n++ < 4) fprintf(stderr, "[RSX] INLINE_ARRAY over %u bytes dropped\n",
+                             RSX_INLINE_MAX_BYTES);
+        return;
+    }
+
+    u32 packed = 0, declared = 0;
+    for (u32 i = 0; i < RSX_MAX_VERTEX_ATTRIBS; i++) {
+        const rsx_vertex_attrib* a = &state->vertex_attribs[i];
+        state->inline_off[i] = packed;
+        if (!a->enabled || !a->type) continue;
+        packed += rsx_vertex_attrib_size(a->type, a->size);
+        if (a->stride > declared) declared = a->stride;
+    }
+    const u32 stride = declared ? declared : packed;
+    if (!stride) return;
+    const u32 count = len / stride;
+    if (!count) return;
+
+    { static int dbg = -1; static int n = 0;
+      if (dbg < 0) dbg = getenv("INLINEDBG") ? 1 : 0;
+      if (dbg && n++ < 16)
+          fprintf(stderr, "[INLINE] draw prim=%u verts=%u stride=%u bytes=%u surf=0x%X fp=0x%X\n",
+                  state->primitive_type, count, stride, len,
+                  state->surface_color_offset[0], state->shader_program); }
+
+    state->inline_vtx = s_inline;
+    state->inline_bytes = len;
+    state->inline_stride = stride;
+    if (s_backend && s_backend->draw_arrays)
+        s_backend->draw_arrays(s_backend->userdata, state->primitive_type, 0, count);
+    state->inline_vtx = NULL;
+    state->inline_bytes = 0;
+}
+
 int rsx_process_method(rsx_state* state, u32 method, u32 data)
 {
     /* RSX_TRACE=<N>: trace the first N methods (bare "1" keeps the old 250).
@@ -340,16 +411,17 @@ int rsx_process_method(rsx_state* state, u32 method, u32 data)
     { static int _rt=-1; if(_rt<0){ const char* e=getenv("RSX_TRACE");
         _rt = e ? (atoi(e) > 1 ? atoi(e) : 250) : 0; }
       if(_rt){ static int _m=0; if(_m++<_rt) fprintf(stderr,"[rsxm] method=0x%04X data=0x%08X\n", method, data); } }
-    /* INLINEDBG=1: INLINE_ARRAY (0x1818, vertex data pushed through the FIFO)
-     * has no handler here, so a pass drawn that way never reaches the backend.
-     * Count the words and say which colour surface they were meant for. */
-    if ((method & 0x1FFCu) == 0x1818u) {
+    /* INLINE_ARRAY: collect the words; BEGIN_END(0) draws them (inline_flush).
+     * INLINEDBG=1 says how many words arrive and for which colour surface. */
+    if (method == NV4097_INLINE_ARRAY) {
         static int dbg = -1; static unsigned long long words = 0;
         if (dbg < 0) dbg = getenv("INLINEDBG") ? 1 : 0;
         if (dbg && ((++words <= 8) || (words % 20000) == 0))
             fprintf(stderr, "[INLINE] word %llu data=0x%08X surf=0x%X prim=%u fp=0x%X\n",
                     words, data, state->surface_color_offset[0],
                     state->primitive_type, state->shader_program);
+        inline_push(data);
+        return 0;
     }
     /* Back-end write label / semaphore (cellGcmSetWriteBackEndLabel): the RSX
      * writes a value to a report/label the CPU polls for CPU<->RSX sync (double
@@ -709,6 +781,8 @@ int rsx_process_method(rsx_state* state, u32 method, u32 data)
             state->primitive_type = data;
             state->in_begin_end = 1;
             state->begin_epoch++;
+            s_inline_len = 0;           /* words from an unterminated group */
+            s_inline_overflow = 0;
 
             /* Flush dirty state to backend before drawing */
             if (s_backend) {
@@ -751,6 +825,7 @@ int rsx_process_method(rsx_state* state, u32 method, u32 data)
                 state->texture_dirty = 0;
             }
         } else {
+            inline_flush(state);
             state->in_begin_end = 0;
         }
         return 0;

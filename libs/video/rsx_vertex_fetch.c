@@ -2,6 +2,7 @@
  * ps3recomp - RSX guest vertex fetch (see rsx_vertex_fetch.h)
  */
 #include "rsx_vertex_fetch.h"
+#include "rsx_vertex_formats.h"    /* rsx_vertex_attrib_size */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -38,6 +39,17 @@ void rsx_fetch_attrib(const rsx_state* st, int idx, u32 vi, float out[4])
     out[3] = st->vertex_data4f[idx][3];
 
     const rsx_vertex_attrib* a = &st->vertex_attribs[idx];
+    const u8* p;
+    if (st->inline_vtx) {
+        /* INLINE_ARRAY draw: the vertices came through the FIFO and are packed
+         * per vertex (see rsx_state.inline_vtx); the array stride and offset
+         * registers do not apply. */
+        if (!a->enabled || !a->type) return;
+        const u32 at = vi * st->inline_stride + st->inline_off[idx];
+        if (at + rsx_vertex_attrib_size(a->type, a->size) > st->inline_bytes) return;
+        p = st->inline_vtx + at;
+        goto decode;
+    }
     if (!a->enabled || a->stride == 0 || !vm_base) return;
 
     /* Vertex frequency divisor (instancing). freq 0/1 = per-vertex. For
@@ -69,10 +81,11 @@ void rsx_fetch_attrib(const rsx_state* st, int idx, u32 vi, float out[4])
      * collapsed to the origin, while non-indexed geometry whose arrays lie
      * outside the shadowed pages drew fine. */
     u32 off = (a->offset & 0x7FFFFFFFu) + ei * a->stride;
-    const u8* p = vm_base + ((a->offset & 0x80000000u)
+    p = vm_base + ((a->offset & 0x80000000u)
         ? cellGcmResolveLocated(0, off)   /* MAIN:  IO offset table          */
         : cellGcmResolveLocated(1, off)); /* LOCAL: VRAM, never the IO table */
 
+decode:;
     u32 n = a->size ? a->size : 4; if (n > 4) n = 4;
     switch (a->type) {
     case 2: /* CELL_GCM_VERTEX_F: float32 BE */

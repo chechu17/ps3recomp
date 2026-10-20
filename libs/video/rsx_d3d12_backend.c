@@ -6031,6 +6031,14 @@ static void d3d12_draw_arrays(void* ud, u32 primitive, u32 first, u32 count)
     if (!s_d3d.pipeline_ready || !s_d3d.vb_mapped) return;
     if (count == 0 || count > MAX_VERTICES) return;
 
+    /* QUAD_STRIP orders its vertices as a triangle strip does (v0 v1 v2 v3,
+     * then v2 v3 v4 v5 ...), so for planar quads the strip IS the quad strip.
+     * A convex POLYGON is a fan. Sly 2 resolves its AA buffer to the display
+     * with one fullscreen inline QUAD_STRIP; skipped, nothing reached the
+     * screen. */
+    if (primitive == RSX_PRIMITIVE_QUAD_STRIP) primitive = RSX_PRIMITIVE_TRIANGLE_STRIP;
+    else if (primitive == RSX_PRIMITIVE_POLYGON) primitive = RSX_PRIMITIVE_TRIANGLE_FAN;
+
     /* QUADS (prim 8) have no D3D12 topology; expand to a triangle list.
      * dbgfont draws all text as quads. Prefer the real vertex-program path
      * (exact position + texcoord): upload raw float4 attrib0 into vp_vb and
@@ -6293,6 +6301,9 @@ static void d3d12_draw_indexed(void* ud, u32 primitive, u32 first, u32 count)
     if (!s_d3d.pipeline_ready) { IDX_OUT(IDX_PIPE); return; }
     if (count == 0 || count > MAX_VERTICES) { IDX_OUT(IDX_COUNT); return; }
     if (!s_d3d.vp_vb_mapped || !s_d3d.vp_root_sig) { IDX_OUT(IDX_VPPATH); return; }
+    /* Same quad-strip/polygon mapping as d3d12_draw_arrays. */
+    if (primitive == RSX_PRIMITIVE_QUAD_STRIP) primitive = RSX_PRIMITIVE_TRIANGLE_STRIP;
+    else if (primitive == RSX_PRIMITIVE_POLYGON) primitive = RSX_PRIMITIVE_TRIANGLE_FAN;
 
     /* Expand through the VP path (indices resolved CPU-side): QUADS -> two
      * triangles per quad, TRIANGLES straight through, STRIP/FAN -> triangle

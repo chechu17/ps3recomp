@@ -102,6 +102,7 @@ extern "C" {
 /* Draw commands */
 #define NV4097_SET_BEGIN_END                    0x00001808
 #define NV4097_DRAW_ARRAYS                     0x00001814
+#define NV4097_INLINE_ARRAY                    0x00001818
 #define NV4097_SET_INDEX_ARRAY_ADDRESS         0x0000181C
 #define NV4097_SET_INDEX_ARRAY_DMA             0x00001820
 #define NV4097_DRAW_INDEX_ARRAY                0x00001824
@@ -308,6 +309,16 @@ typedef struct rsx_state {
 
     /* Vertex attributes */
     rsx_vertex_attrib vertex_attribs[RSX_MAX_VERTEX_ATTRIBS];
+    /* NV4097_INLINE_ARRAY (0x1818): vertices pushed through the FIFO itself
+     * instead of read from a vertex array. Set only for the duration of the
+     * draw_arrays call that rsx_process_method issues at BEGIN_END(0); while
+     * set, rsx_fetch_attrib reads attribute `i` of vertex `v` from
+     * inline_vtx + v * inline_stride + inline_off[i] (big-endian, packed in
+     * attribute order). NULL otherwise. */
+    const u8* inline_vtx;
+    u32 inline_bytes;
+    u32 inline_stride;
+    u32 inline_off[RSX_MAX_VERTEX_ATTRIBS];
     /* Constant ("current") vertex attributes -- NV4097_SET_VERTEX_DATA4F_M and
      * friends. When an attribute array is DISABLED, the hardware feeds every
      * vertex this register rather than zero, exactly like glColor4f with the
